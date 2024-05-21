@@ -1,0 +1,10 @@
+Unit,Adaptive Treatment,Fraction Treated,Treatment Effect Function,Method,NMAE,NMAE Treated Only
+County Name,True,1.0,additive,My Estimator,0.17785522320050118,0.15009146674710724
+County Name,True,1.0,additive,MCNNM,0.0,0.30593326566704826
+County Name,True,1.0,additive,LinearDML,0.09680108055010507,0.07056614905945481
+County Name,True,1.0,additive,DML,0.24977099673495406,0.2031469421784289
+County Name,True,1.0,additive,CausalForestDML,0.13357359676521066,0.07683071742239117
+County Name,True,1.0,additive,DRLearner,0.12135129048995226,0.10885642948379824
+County Name,True,1.0,additive,ForestDRLearner,0.15498267839420768,0.07561034924674874
+County Name,True,1.0,additive,XLearner,0.1987317874631793,0.13148521468249078
+County Name,True,1.0,additive,Causal Forest (R),0.06604938613370988,0.04663614424799

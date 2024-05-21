@@ -13,5 +13,5 @@ To run the experiments:
 
 ### Files
 - `Experiment.ipynb`: This is the primary Jupyter notebook where you can run code blocks to execute experiments and visualize results.
-- `estimator.py`: Contains the implementation of the Panel Clustering Estimator (PaCE).
-- `experiment_utils.py`: Includes functions that are used for the experiments.
+- `estimator.py`: This file contains the implementation of the Panel Clustering Estimator (PaCE).
+- `experiment_utils.py`: This file includes functions that are used for the experiments.
