@@ -1,4 +1,11 @@
 
+## Requirements
+To install requirements:
+
+```setup
+pip install -r requirements.txt
+```
+
 ## Running the Experiments
 To run the experiments:
 1. Open the `Experiment.ipynb` notebook.

@@ -1,0 +1,9 @@
+pandas
+numpy
+scipy
+scikit-learn
+econml
+linearmodels
+matplotlib
+rpy2
+datetime
