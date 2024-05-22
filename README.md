@@ -1,3 +1,5 @@
+# Panel Clustering Estimator (PaCE)
+
 
 ## Requirements
 To install requirements:

@@ -1,0 +1,10 @@
+Unit,Adaptive Treatment,Fraction Treated,Treatment Effect Function,Method,NMAE,NMAE Treated Only
+State Name,True,1.0,additive,My Estimator,0.09451278456273753,0.09764133605608208
+State Name,True,1.0,additive,MCNNM,0.0,0.19393767681842763
+State Name,True,1.0,additive,LinearDML,0.12846611046054915,0.14558090797583062
+State Name,True,1.0,additive,DML,0.0532974013577821,0.058862636987126994
+State Name,True,1.0,additive,CausalForestDML,0.09405782121500351,0.09786798992511547
+State Name,True,1.0,additive,DRLearner,21303.782800261448,23199.47714244037
+State Name,True,1.0,additive,ForestDRLearner,0.2802334664312479,0.29429783592594344
+State Name,True,1.0,additive,XLearner,0.13312858346833706,0.12455962410056741
+State Name,True,1.0,additive,Causal Forest (R),0.12140187524561948,0.12385267876886333
