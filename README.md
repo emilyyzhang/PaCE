@@ -22,5 +22,6 @@ To run the experiments:
 
 ### Files
 - `Experiment.ipynb`: This is the primary Jupyter notebook where you can run code blocks to execute experiments and visualize results.
+- `analyze_results.R`: This file contains R script for generating the latex tables in the supplementary materials. 
 - `estimator.py`: This file contains the implementation of the Panel Clustering Estimator (PaCE).
 - `experiment_utils.py`: This file includes functions that are used for the experiments.

@@ -152,12 +152,13 @@ class TreatmentEffectEstimator:
                  p_value_for_splits=.02, 
                  random=False,
                  force_center_split=False,
-                 splitting_criterion="MSE"):
+                 splitting_criterion="MSE",
+                 use_little_m = True):
         self.data = data
         self.column_unit = column_unit
         self.column_time = column_time
         self.column_outcome = column_outcome
-        self.columns_for_X = columns_for_X  + [column_outcome]
+        self.columns_for_X = columns_for_X  #+ [column_outcome]
         self.columns_for_Z = columns_for_Z
         self.suggest_r = suggest_r
         self.min_samples_leaf = min_samples_leaf
@@ -165,6 +166,7 @@ class TreatmentEffectEstimator:
         self.random = random
         self.force_center_split = force_center_split
         self.splitting_criterion = splitting_criterion
+        self.use_little_m = use_little_m
 
         self.O = data.pivot_table(index=self.column_unit, columns=self.column_time, values=column_outcome)
         n, T = self.O.shape
@@ -172,6 +174,7 @@ class TreatmentEffectEstimator:
         self.l = np.linalg.svd(self.O, compute_uv=False)[0]
         self.Z_list = [data.pivot_table(index=self.column_unit, columns=self.column_time, values=column).values for column in columns_for_Z]
         self.M = np.copy(self.O)
+        # self.M = np.zeros_like(self.O)
         self.m = np.zeros(n)
 
         for treatment_name in columns_for_Z: self.data[f'Cluster_{treatment_name}'] = 0 # cluster labels for each treatment
@@ -179,7 +182,7 @@ class TreatmentEffectEstimator:
         self.leaves = {treatment_name: [self.roots[treatment_name]] for treatment_name in self.roots}
 
     def update_M_m(self, eps=1e-3):
-        O, Z_list, M, m, l = self.O.values, self.Z_list, self.M, self.m, self.l
+        O, M, m, l = self.O.values, self.M, self.m, self.l
 
         Z_list, self.clusters, self.treatment_names, self.cluster_names = [], [], [], []
         for treatment_name, Z in zip(self.columns_for_Z, self.Z_list):
@@ -216,7 +219,7 @@ class TreatmentEffectEstimator:
             s = np.maximum(s - l, 0)
             M = (u * s).dot(vh)
 
-            m = (O - M - sum(tau_new[k] * Z for k, Z in enumerate(Z_list))).dot(np.ones((T, 1))) / T 
+            if self.use_little_m: m = (O - M - sum(tau_new[k] * Z for k, Z in enumerate(Z_list))).dot(np.ones((T, 1))) / T 
 
             if np.sum(s > 0) < self.suggest_r: 
                 l *= 0.9  
@@ -235,11 +238,12 @@ class TreatmentEffectEstimator:
 
     def update_tree(self):
         if all(leaf.value == -np.inf for leaves in self.leaves.values() for leaf in leaves): 
-            return -np.inf
+            return 
 
         self.update_M_m()
 
         for treatment_name, leaves in self.leaves.items():
+            # print(treatment_name, len(leaves))
             [leaf.get_split() for leaf in leaves if leaf.value != -np.inf]
 
         # Iterate and split for each treatment
@@ -285,37 +289,110 @@ class TreatmentEffectEstimator:
         n, T = u.shape[0], vh.shape[1]
         I_VVT = np.eye(T) - vh.T.dot(vh)
         one_T = np.ones((T, 1))
+        one_perp = np.eye(T) 
+        if self.use_little_m: one_perp -= one_T @ one_T.T / T
 
         PTperpZ_list = []
         for Z in Z_list:
-            PTperpZ = (np.eye(n) - u.dot(u.T)).dot(Z).dot(np.eye(T) - one_T @ one_T.T / T).dot(I_VVT)
+            PTperpZ = (np.eye(n) - u.dot(u.T)).dot(Z).dot(one_perp).dot(I_VVT)
             PTperpZ_list.append(PTperpZ)
 
         D = np.array([[np.sum(Zk * PTperpZ) for PTperpZ in PTperpZ_list] for Zk in Z_list])
-        Delta = self.l * np.array([np.sum(Z * (u.dot(vh) - u.dot(vh) @ one_T @ one_T.T / T)) for Z in Z_list])
+        Delta = self.l * np.array([np.sum(Z * (u.dot(vh))) for Z in Z_list])
 
         tau_delta = np.linalg.pinv(D) @ Delta
         tau_debias = tau - tau_delta
         tau_debias = [t/n for t, n in zip(tau_debias, self.norms)]
         self.tau = tau_debias
 
+        ## compute standard deviation
+        E = O - M - np.outer(self.m, np.ones(T)) - sum(tau[k] * Z for k, Z in enumerate(Z_list))
+        X = np.column_stack([arr.flatten() for arr in PTperpZ_list])
+        CI = np.linalg.inv(D) @ X.T @ np.diag(E.flatten()**2) @ X @ np.linalg.inv(D).T
+        std = np.sqrt(np.diag(CI))
+        self.std = [s/n for s, n in zip(std, self.norms)]
+
         # write to dataframe
-        results = {treatment_name: np.zeros_like(O, dtype=float) for treatment_name in self.columns_for_Z}
-        for treatment_name, c, t in zip(self.treatment_names, self.clusters, tau_debias): 
-            results[treatment_name] += c * t
+        for tau, std, treatment_name, cluster_name in zip(self.tau, self.std, self.treatment_names, self.cluster_names):
+            # Create the mask for the rows where the cluster_name matches 
+            mask = (self.data['Cluster_' + treatment_name] == cluster_name)
 
-        self.results_df = self.data[[self.column_unit, self.column_time]]
-        for treatment_name in results:
-            df = pd.DataFrame(results[treatment_name], index=self.O.index, columns=self.O.columns).reset_index().melt(id_vars=self.column_unit, var_name=self.column_time, value_name=treatment_name + '_result')
-            self.results_df = pd.merge(self.results_df, df, on=[self.column_unit, self.column_time], how='left')
+            # Assign the tau value to the result column
+            self.data.loc[mask, treatment_name + '_result'] = tau
 
+            # Update leaf tau
+            for leaf in self.leaves[treatment_name]:
+                if leaf.node_name == cluster_name:
+                    leaf.tau = tau
+                    break
+
+        ## Compute ATE for each treatment and store it in self.ate
+        self.ate = []
+        for treatment_name in self.columns_for_Z:
+            weighted_sum_tau = sum(leaf.tau * leaf.n for leaf in self.leaves[treatment_name])
+            self.ate.append(weighted_sum_tau / (n * T))
+        # print(self.ate)
+
+        return self.tau, self.std
 
     def fit(self, max_leaves = 20):
-        for i in range(max_leaves): self.update_tree()
+        for i in range(max_leaves - 1): 
+            print(i)
+            self.update_tree()
+
+            # Stop if any treatments have reached max_leaves
+
+            if any(len(self.leaves[treatment_name]) >= max_leaves for treatment_name in self.columns_for_Z): break
+
         self.debias()
 
+
+    def predict(self, X):
+        """
+        Predict the treatment effects for the input data X.
+
+        For each treatment, this function traverses the corresponding decision tree to 
+        determine the appropriate leaf node (cluster) that X falls into. It then retrieves 
+        the tau (treatment effect) and std (standard deviation) values associated with that 
+        cluster and returns them.
+
+        Returns a dictionary where the keys are treatment names and the values are tuples of 
+        the form (tau, std), representing the treatment effect and standard deviation 
+        for the cluster that X falls into for each treatment.
+        """
+
+        results = {}
+        for treatment_name in self.roots:
+            current_node = self.roots[treatment_name]
+            
+            # Traverse the tree to find the appropriate leaf
+            while current_node.left is not None and current_node.right is not None:
+                if X[current_node.split[0]] <= current_node.split[1]:
+                    current_node = current_node.left
+                else:
+                    current_node = current_node.right
+
+            # Get the cluster name for the found leaf node
+            cluster_name = current_node.node_name
+
+            # Find the corresponding tau and std values using the cluster name and treatment name
+            for tau, std, tn, cn in zip(self.tau, self.std, self.treatment_names, self.cluster_names):
+                if tn == treatment_name and cn == cluster_name:
+                    results[treatment_name] = (tau, std)
+                    break
+        
+        return results
+
+    def get_counterfactual_matrix(self):
+        """
+        Return the matrix that represents the counterfactual, plus error.
+        """
+        return self.O.values - sum(self.tau[k] * Z for k, Z in enumerate(self.Z_list_clusters))
+        
+
     def effect(self):
-        return self.results_df.drop(columns=[self.column_unit, self.column_time])
-    
+        # Select only columns that end with '_result'
+        result_columns = [col for col in self.data.columns if col.endswith('_result')]
+        return self.data[result_columns]
 
     
