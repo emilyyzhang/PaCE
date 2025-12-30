@@ -1,5 +1,10 @@
 # Panel Clustering Estimator (PaCE)
 
+The **Panel Clustering Estimator (PaCE)** estimates heterogeneous treatment effects in panel data
+by combining low-rank structure with tree-based clustering of treatment effects.
+PaCE is designed for panel settings with repeated observations over units and time, where treatment effects
+may be heterogeneous.
+
 
 ## Requirements
 To install requirements:
@@ -8,20 +13,84 @@ To install requirements:
 pip install -r requirements.txt
 ```
 
-## Running the Experiments
-To run the experiments:
-1. Open the `Experiment.ipynb` notebook.
-2. Execute the code blocks to run the experiments and visualize the results.
+## Data format
+
+PaCE expects a long-format pandas DataFrame `df`, where each row corresponds to one (unit, time) pair.
+
+### Required columns
+
+- column_unit: unit identifier (e.g. "unit")
+- column_time: time index (e.g. "time")
+- column_outcome: outcome variable (e.g. "y")
+
+### Covariates
+
+- columns_for_X: list of covariate column names used for tree splits
+  (e.g. ["x1", "x2"])
+
+### Treatments
+
+- columns_for_Z: list of binary treatment indicator column names
+  (values should be 0/1 or False/True)
 
 
-## Structure of Repository
+---
 
-### Folders
-- `raw_data`: This folder contains the raw data files used in the experiments.
-- `results`: This directory contains the results from previous experiments.
+## Basic usage
 
-### Files
-- `Experiment.ipynb`: This is the primary Jupyter notebook where you can run code blocks to execute experiments and visualize results.
-- `analyze_results.R`: This file contains R script for generating the latex tables in the supplementary materials. 
-- `estimator.py`: This file contains the implementation of the Panel Clustering Estimator (PaCE).
-- `experiment_utils.py`: This file includes functions that are used for the experiments.
+```python
+from estimator import TreatmentEffectEstimator
+
+est = TreatmentEffectEstimator(
+    data=df,
+    column_unit="unit",
+    column_time="time",
+    column_outcome="y",
+    columns_for_X=["x1", "x2"],
+    columns_for_Z=["treatA"],
+    suggest_r=5,
+)
+
+est.fit(max_leaves=10)
+
+print(est.ate)
+```
+
+---
+
+## Outputs
+
+After fitting, the estimator provides:
+
+### Average treatment effects
+
+- est.ate  
+  A list containing the average treatment effect (ATE) for each treatment in
+  columns_for_Z.
+
+### Cluster-level effects
+
+- est.tau  
+  Estimated treatment effects for each discovered cluster.
+
+- est.std  
+  Corresponding standard errors.
+
+
+## Prediction for new covariates
+
+You can predict treatment effects for a new covariate vector by traversing the learned trees:
+
+```python
+x_new = {"x1": 0.3, "x2": -0.8}
+est.predict(x_new)
+```
+
+
+## Example
+
+A complete runnable example using synthetic panel data is provided in:
+
+```
+examples/minimal_example.py
+```

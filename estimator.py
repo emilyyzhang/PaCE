@@ -1,12 +1,16 @@
+"""
+Treatment effect estimator with tree-based clustering.
+"""
+
 import pandas as pd
 import numpy as np
-import random
 from scipy.stats import ttest_ind
 from sklearn.linear_model import LinearRegression
 from sklearn.exceptions import ConvergenceWarning
 import warnings
 
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
+
 
 def solve_OLS(O, Z, tau_init=0):
     '''
@@ -56,7 +60,7 @@ class Node:
         self.tau = None
 
     def get_split(self): # binary search for split
-        self.data_in_leaf = self.estimator.data[self.cluster_mask]
+        self.data_in_leaf = self.estimator.data_in[self.cluster_mask]
 
         # make the target for this node: (O-M-sum_{all but current treatment} tau*Z)
         excluded_column_name = f"{self.treatment_name}_{self.node_name}"        
@@ -65,7 +69,7 @@ class Node:
         self.target = self.estimator.data['target'] - filtered_Z_df.dot(filtered_tau)
 
         best_split, best_value = None, -np.inf
-        selected_columns = random.sample(self.columns_for_X, len(self.columns_for_X) // 2) if self.estimator.random else self.columns_for_X
+        selected_columns =  self.columns_for_X
         for column in selected_columns:
             unique_values = sorted(self.data_in_leaf[column].unique())
 
@@ -75,8 +79,8 @@ class Node:
                 mid = low + (high - low) // 2
                 split_value = unique_values[mid]
 
-                left_leaf = self.cluster_mask & (self.estimator.data[column] <= split_value) # indicators for left leaf
-                right_leaf = self.cluster_mask & (self.estimator.data[column] > split_value)
+                left_leaf = self.cluster_mask & (self.estimator.data_in[column] <= split_value) # indicators for left leaf
+                right_leaf = self.cluster_mask & (self.estimator.data_in[column] > split_value)
                 value = self.calculate_value(left_leaf, right_leaf, column, split_value)
 
                 if value > best_value and not self.is_invalid_split(left_leaf, right_leaf): 
@@ -86,11 +90,11 @@ class Node:
                 # Adjust search space
                 if 0 < mid < len(unique_values) - 1:
                     prev_value = self.calculate_value(
-                        self.cluster_mask & (self.estimator.data[column] <= unique_values[mid-1]), 
-                        self.cluster_mask & (self.estimator.data[column] > unique_values[mid-1]))
+                        self.cluster_mask & (self.estimator.data_in[column] <= unique_values[mid-1]), 
+                        self.cluster_mask & (self.estimator.data_in[column] > unique_values[mid-1]))
                     next_value = self.calculate_value(
-                        self.cluster_mask & (self.estimator.data[column] <= unique_values[mid+1]), 
-                        self.cluster_mask & (self.estimator.data[column] > unique_values[mid+1]))
+                        self.cluster_mask & (self.estimator.data_in[column] <= unique_values[mid+1]), 
+                        self.cluster_mask & (self.estimator.data_in[column] > unique_values[mid+1]))
                     
                     if prev_value > next_value: high = mid - 1
                     else: low = mid + 1
@@ -104,8 +108,8 @@ class Node:
             return True
 
         data_for_pivot = self.estimator.data[[self.column_unit, self.column_time]]
-        left_leaf_pivoted = data_for_pivot.assign(Indicator=left_leaf).pivot_table(index=self.column_unit, columns=self.column_time, values='Indicator').values
-        right_leaf_pivoted = data_for_pivot.assign(Indicator=right_leaf).pivot_table(index=self.column_unit, columns=self.column_time, values='Indicator').values
+        left_leaf_pivoted = data_for_pivot.assign(Indicator=left_leaf).pivot_table(index=self.column_unit, columns=self.column_time, values='Indicator').fillna(0).values
+        right_leaf_pivoted = data_for_pivot.assign(Indicator=right_leaf).pivot_table(index=self.column_unit, columns=self.column_time, values='Indicator').fillna(0).values
         Z = self.estimator.Z_list[self.estimator.columns_for_Z.index(self.treatment_name)]
 
         Z_left = Z * left_leaf_pivoted
@@ -121,7 +125,7 @@ class Node:
         return False
 
     def calculate_value(self, left_leaf, right_leaf, column=None, split_value=None, verbose=False):
-        Z_values = self.estimator.data[self.treatment_name] 
+        Z_values = self.estimator.data_in[self.treatment_name] 
 
         left_treated_target = self.target[Z_values & left_leaf]
         right_treated_target = self.target[Z_values & right_leaf]
@@ -150,11 +154,11 @@ class TreatmentEffectEstimator:
     def __init__(self, data, column_unit, column_time, column_outcome, columns_for_X, columns_for_Z, suggest_r, 
                  min_samples_leaf=10, 
                  p_value_for_splits=.02, 
-                 random=False,
-                 force_center_split=False,
                  splitting_criterion="MSE",
                  use_little_m = True):
-        self.data = data
+        self.data_in = data # original input (don’t touch)
+        self.data = data[[column_unit, column_time]].copy()  # NEW: only what you need to join on
+
         self.column_unit = column_unit
         self.column_time = column_time
         self.column_outcome = column_outcome
@@ -163,8 +167,6 @@ class TreatmentEffectEstimator:
         self.suggest_r = suggest_r
         self.min_samples_leaf = min_samples_leaf
         self.p_value_for_splits = p_value_for_splits
-        self.random = random
-        self.force_center_split = force_center_split
         self.splitting_criterion = splitting_criterion
         self.use_little_m = use_little_m
 
@@ -174,7 +176,6 @@ class TreatmentEffectEstimator:
         self.l = np.linalg.svd(self.O, compute_uv=False)[0]
         self.Z_list = [data.pivot_table(index=self.column_unit, columns=self.column_time, values=column).values for column in columns_for_Z]
         self.M = np.copy(self.O)
-        # self.M = np.zeros_like(self.O)
         self.m = np.zeros(n)
 
         for treatment_name in columns_for_Z: self.data[f'Cluster_{treatment_name}'] = 0 # cluster labels for each treatment
@@ -219,13 +220,13 @@ class TreatmentEffectEstimator:
             s = np.maximum(s - l, 0)
             M = (u * s).dot(vh)
 
-            if self.use_little_m: m = (O - M - sum(tau_new[k] * Z for k, Z in enumerate(Z_list))).dot(np.ones((T, 1))) / T 
+            if self.use_little_m: m = ((O - M - sum(tau_new[k] * Z for k, Z in enumerate(Z_list))).dot(np.ones((T, 1))) / T ).ravel()
 
             if np.sum(s > 0) < self.suggest_r: 
                 l *= 0.9  
                 continue
 
-            if np.linalg.norm(tau_new - tau) < eps * np.linalg.norm(tau): break
+            if np.linalg.norm(tau_new - tau) < eps * max(np.linalg.norm(tau), 1e-12): break
             tau = tau_new.copy()
             
         target = pd.DataFrame(target, index=self.O.index, columns=self.O.columns).reset_index().melt(id_vars=[self.column_unit], var_name=self.column_time, value_name='target')
@@ -243,7 +244,6 @@ class TreatmentEffectEstimator:
         self.update_M_m()
 
         for treatment_name, leaves in self.leaves.items():
-            # print(treatment_name, len(leaves))
             [leaf.get_split() for leaf in leaves if leaf.value != -np.inf]
 
         # Iterate and split for each treatment
@@ -251,30 +251,21 @@ class TreatmentEffectEstimator:
             # Find the leaf with the max value
             leaf = max(leaves, key=lambda x: x.value)
 
-            if self.force_center_split: ## newly added
-                leaf.split = self.columns_for_X[0], self.data[self.columns_for_X[0]].median()
-                leaf.value = 0
-
             if leaf.value == -np.inf: continue
             split_column, split_value = leaf.split
-
-            # print(treatment_name, leaf.split)
-            # print([(le.node_name, le.value, le.split) for le in leaves])
-            # print(sorted([(le.tau, le.n) for le in leaves], key=lambda x: x[0]))
 
             # Perform the split and update data clusters
             cluster_column_name = f'Cluster_{treatment_name}'
             max_cluster = max(self.data[cluster_column_name])
             left_cluster, right_cluster = max_cluster + 1, max_cluster + 2
             cluster_mask = self.data[cluster_column_name] == leaf.node_name
-            self.data.loc[cluster_mask & (self.data[split_column] <= split_value), cluster_column_name] = left_cluster
-            self.data.loc[cluster_mask & (self.data[split_column] > split_value), cluster_column_name] = right_cluster
+            self.data.loc[cluster_mask & (self.data_in[split_column] <= split_value), cluster_column_name] = left_cluster
+            self.data.loc[cluster_mask & (self.data_in[split_column] > split_value), cluster_column_name] = right_cluster
 
             # Update tree structure
             leaf.left, leaf.right = Node(self, treatment_name, left_cluster), Node(self, treatment_name, right_cluster)
             leaves.remove(leaf)
             leaves.extend([leaf.left, leaf.right])
-
 
     def debias(self):
         tau = self.update_M_m(eps=1e-13)
@@ -308,7 +299,7 @@ class TreatmentEffectEstimator:
         ## compute standard deviation
         E = O - M - np.outer(self.m, np.ones(T)) - sum(tau[k] * Z for k, Z in enumerate(Z_list))
         X = np.column_stack([arr.flatten() for arr in PTperpZ_list])
-        CI = np.linalg.inv(D) @ X.T @ np.diag(E.flatten()**2) @ X @ np.linalg.inv(D).T
+        CI = np.linalg.pinv(D) @ X.T @ np.diag(E.flatten()**2) @ X @ np.linalg.pinv(D).T
         std = np.sqrt(np.diag(CI))
         self.std = [s/n for s, n in zip(std, self.norms)]
 
@@ -319,6 +310,7 @@ class TreatmentEffectEstimator:
 
             # Assign the tau value to the result column
             self.data.loc[mask, treatment_name + '_result'] = tau
+            self.data.loc[mask, treatment_name + '_std'] = std  
 
             # Update leaf tau
             for leaf in self.leaves[treatment_name]:
@@ -331,7 +323,6 @@ class TreatmentEffectEstimator:
         for treatment_name in self.columns_for_Z:
             weighted_sum_tau = sum(leaf.tau * leaf.n for leaf in self.leaves[treatment_name])
             self.ate.append(weighted_sum_tau / (n * T))
-        # print(self.ate)
 
         return self.tau, self.std
 
@@ -341,7 +332,6 @@ class TreatmentEffectEstimator:
             self.update_tree()
 
             # Stop if any treatments have reached max_leaves
-
             if any(len(self.leaves[treatment_name]) >= max_leaves for treatment_name in self.columns_for_Z): break
 
         self.debias()
@@ -396,3 +386,4 @@ class TreatmentEffectEstimator:
         return self.data[result_columns]
 
     
+
