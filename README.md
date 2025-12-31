@@ -77,14 +77,7 @@ After fitting, the estimator provides:
   Corresponding standard errors.
 
 
-## Prediction for new covariates
 
-You can predict treatment effects for a new covariate vector by traversing the learned trees:
-
-```python
-x_new = {"x1": 0.3, "x2": -0.8}
-est.predict(x_new)
-```
 
 
 ## Example

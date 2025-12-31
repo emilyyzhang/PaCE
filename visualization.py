@@ -27,11 +27,10 @@ class TreatmentEffectVisualizer:
             ) from _graphviz_import_error
 
         self.estimator = estimator
-        self.graph = graphviz.Digraph(
-            format="pdf",
-            node_attr={"shape": "plaintext"},
-            graph_attr={"rankdir": "TB", "ranksep": "0.2", "nodesep": "0.1"},
-        )
+        self.graph = graphviz.Digraph(format='pdf', 
+                                      node_attr={'shape': 'record', 'height': '.1'},
+                                      graph_attr={'rankdir': 'TB', 'ranksep': '0.2', 'nodesep': '0.1'}
+                                      )
 
     def visualize(self):
         for treatment_name, root_node in self.estimator.roots.items():
@@ -39,25 +38,20 @@ class TreatmentEffectVisualizer:
         return self.graph
 
     def _visualize_node(self, node, treatment_name, parent_id=None):
-        if node is None:
-            return
-
+        if node is None: return
         node_id = f"node_{id(node)}"
 
-        # Leaf node label: show estimate + std if available
         if node.left is None and node.right is None:
-            tau = getattr(node, "tau", None)
-            std = getattr(node, "std", None)
+            matching_row = self.estimator.data[(self.estimator.data[f'Cluster_{treatment_name}'] == node.node_name)]
+            prediction = matching_row.iloc[0][f'{treatment_name}_result']
+            std = matching_row.iloc[0][f'{treatment_name}_std']
+            tau_str, std_str = round(prediction, 2), round(std, 1)
 
-            tau_str = f"{tau:.2f}" if tau is not None else "NA"
-            std_str = f"{std:.1f}" if std is not None else "NA"
-
-            label = f"""<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
-                <TR><TD><b>{tau_str}</b></TD></TR>
-                <TR><TD>({std_str})</TD></TR>
-                <TR><TD>Node {node.node_name}</TD></TR>
-                <TR><TD>Samples: {node.n}</TD></TR>
-            </TABLE>>"""
+            label = f"""<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0">
+                    <TR><TD><b>${tau_str}</b></TD></TR>
+                    <TR><TD>({std_str})</TD></TR>
+                    </TABLE>>"""      
+            
         else:
             label_lines = [f"Node {node.node_name}", f"Samples: {node.n}"]
             if node.split is not None:
